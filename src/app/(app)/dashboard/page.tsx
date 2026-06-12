@@ -174,7 +174,7 @@ export default async function DashboardPage() {
             ) : (
               <div className="divide-y divide-border">
                 {commitments.map((c: any) => {
-                  const pct = getProgressPercent(c.totalDone, c.meta_valor)
+                  const pct = getProgressPercent(c.commitment_type || 'meta_minima', c.totalDone, c.meta_valor)
                   return (
                     <div key={c.id} className="px-6 py-3.5 flex items-center gap-4">
                       <div className="flex-shrink-0">

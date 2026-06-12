@@ -95,7 +95,7 @@ export default async function GoalDetailPage({ params }: Props) {
           </div>
           <div className="divide-y divide-border">
             {commitmentData.map((c) => {
-              const pct = getProgressPercent(c.totalDone, c.meta_valor)
+              const pct = getProgressPercent(c.commitment_type || 'meta_minima', c.totalDone, c.meta_valor)
               return (
                 <div key={c.id} className="px-5 py-4">
                   <div className="flex items-start gap-3">
