@@ -1,25 +1,18 @@
 export type GoalCategory =
-  | 'estudos'
-  | 'saude'
-  | 'financas'
-  | 'carreira'
-  | 'desenvolvimento_pessoal'
-  | 'outro'
+  | 'estudos' | 'saude' | 'financas' | 'carreira'
+  | 'desenvolvimento_pessoal' | 'outro'
 
 export type GoalStatus = 'ativo' | 'pausado' | 'concluido' | 'abandonado'
 export type CommitmentFrequency = 'diaria' | 'semanal' | 'mensal'
 export type PenaltyMode = 'fixed' | 'linear' | 'exponential'
 export type CommitmentUnit =
   | 'horas' | 'sessoes' | 'dias' | 'questoes'
-  | 'quilometros' | 'passos' | 'unidades'
+  | 'quilometros' | 'passos' | 'unidades' | 'kcal' | 'reais' | 'ocorrencias'
 
-export interface User {
-  id: string
-  email: string
-  nome: string | null
-  charity_id: string | null
-  created_at: string
-}
+// TIPO 1: meta_minima — realizado < meta gera consequência
+// TIPO 2: limite_maximo — realizado > limite gera consequência
+// TIPO 3: ocorrencia — cada evento gera consequência individual
+export type CommitmentType = 'meta_minima' | 'limite_maximo' | 'ocorrencia'
 
 export interface Goal {
   id: string
@@ -47,6 +40,8 @@ export interface Commitment {
   penalidade_por_unidade: number
   penalty_mode: PenaltyMode
   penalty_multiplier: number
+  commitment_type: CommitmentType
+  weekly_budget: number | null
   ativo: boolean
   created_at: string
   updated_at: string
@@ -90,22 +85,6 @@ export interface Penalty {
   created_at: string
 }
 
-export interface Cycle {
-  id: string
-  user_id: string
-  commitment_id: string
-  goal_id: string
-  periodo_inicio: string
-  periodo_fim: string
-  numero_ciclo: number
-  status: 'em_andamento' | 'concluido' | 'falhou'
-  meta_valor: number
-  realizado_valor: number
-  penalidade_valor: number
-  created_at: string
-  updated_at: string
-}
-
 export interface WeeklyContract {
   id: string
   user_id: string
@@ -125,6 +104,7 @@ export interface ContractCommitment {
   unidade: CommitmentUnit
   frequencia: CommitmentFrequency
   goal_nome: string
+  commitment_type: CommitmentType
 }
 
 export interface HonorDay {
@@ -147,35 +127,47 @@ export interface Charity {
   ativo: boolean
 }
 
-export interface EditHistory {
+export interface Week {
   id: string
-  entity_type: string
-  entity_id: string
-  campo: string
-  valor_anterior: string | null
-  valor_novo: string | null
-  edited_at: string
+  user_id: string
+  week_number: number
+  year: number
+  data_inicio: string
+  data_fim: string
+  status: 'futuro' | 'em_andamento' | 'encerrado'
+  total_consequencias: number
+  total_orcamento: number
+  created_at: string
 }
 
-export interface GoalWithCommitments extends Goal {
-  commitments: CommitmentWithProgress[]
+export interface WeekPlan {
+  id: string
+  user_id: string
+  commitment_id: string
+  goal_id: string
+  week_number: number
+  year: number
+  meta_valor: number
+  data_inicio: string
+  data_fim: string
 }
 
 export interface CommitmentWithProgress extends Commitment {
+  goal?: Goal
   progress_entries?: ProgressEntry[]
-  current_period_progress?: number
-  current_period_penalty?: number
+  occurrences?: Occurrence[]
+  current_period_done: number
+  current_period_penalty: number
+  met: boolean
 }
 
-export interface LifetimeStats {
-  total_horas: number
-  total_questoes: number
-  total_sessoes: number
-  total_quilometros: number
-  total_passos: number
-  total_penalty: number
-  total_contracts: number
-  honor_days_current_streak: number
-  honor_days_best_streak: number
-  honor_days_total: number
+export interface WeekSummary {
+  weekNumber: number
+  year: number
+  dateStart: Date
+  dateEnd: Date
+  commitments: CommitmentWithProgress[]
+  totalPenalty: number
+  totalBudget: number
+  budgetUsedPct: number
 }

@@ -1,92 +1,68 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { Heart, ExternalLink, ArrowRight } from 'lucide-react'
-import { formatCurrency, formatDate, getCurrentWeekRange, getCurrentMonthRange } from '@/lib/utils'
-import { format } from 'date-fns'
+import { Heart, ExternalLink, TrendingUp } from 'lucide-react'
+import { formatCurrency, formatDate, getCurrentWeekRange, getCurrentMonthRange, calculatePenalty, cn } from '@/lib/utils'
+import { format, startOfMonth, subMonths } from 'date-fns'
+import { ptBR } from 'date-fns/locale'
 import { CharityCard } from '@/components/goals/charity-card'
-import type { Charity, Goal, Commitment } from '@/types'
+import type { Charity, Commitment } from '@/types'
 
 export default async function ImpactPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/auth/login')
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('*, charities(*)')
-    .eq('id', user.id)
-    .single()
-
-  const { data: charities } = await supabase
-    .from('charities')
-    .select('*')
-    .eq('ativo', true)
-    .order('nome')
+  const { data: profile } = await supabase.from('profiles').select('*, charities(*)').eq('id', user.id).single()
+  const { data: charities } = await supabase.from('charities').select('*').eq('ativo', true).order('nome')
 
   const { start: weekStart, end: weekEnd } = getCurrentWeekRange()
   const { start: monthStart, end: monthEnd } = getCurrentMonthRange()
 
-  // Calculate real-time penalties from progress
-  const { data: goals } = await supabase
-    .from('goals')
-    .select('*')
-    .eq('user_id', user.id)
-    .eq('status', 'ativo')
+  const { data: allCommitments } = await supabase.from('commitments').select('*').eq('user_id', user.id).eq('ativo', true)
 
-  const { data: allCommitments } = await supabase
-    .from('commitments')
-    .select('*')
-    .eq('user_id', user.id)
-    .eq('ativo', true)
+  async function calcPeriodPenalty(dateStart: Date, dateEnd: Date): Promise<number> {
+    const { data: prog } = await supabase.from('progress_entries').select('*, commitments(commitment_type,meta_valor,penalidade_por_unidade,penalty_mode,penalty_multiplier)')
+      .eq('user_id', user!.id)
+      .gte('data', format(dateStart, 'yyyy-MM-dd')).lte('data', format(dateEnd, 'yyyy-MM-dd'))
+    const { data: occ } = await supabase.from('occurrences').select('penalidade_valor')
+      .eq('user_id', user!.id)
+      .gte('data', format(dateStart, 'yyyy-MM-dd')).lte('data', format(dateEnd, 'yyyy-MM-dd'))
 
-  // Week penalties
-  const { data: weekProgress } = await supabase
-    .from('progress_entries')
-    .select('*')
-    .eq('user_id', user.id)
-    .gte('data', format(weekStart, 'yyyy-MM-dd'))
-    .lte('data', format(weekEnd, 'yyyy-MM-dd'))
-
-  // Month penalties
-  const { data: monthProgress } = await supabase
-    .from('progress_entries')
-    .select('*')
-    .eq('user_id', user.id)
-    .gte('data', format(monthStart, 'yyyy-MM-dd'))
-    .lte('data', format(monthEnd, 'yyyy-MM-dd'))
-
-  function calcPenalty(progress: any[], commitments: Commitment[]) {
-    return commitments.reduce((total: number, c: Commitment) => {
-      const done = (progress || [])
-        .filter((p) => p.commitment_id === c.id)
-        .reduce((sum: number, p: any) => sum + Number(p.quantidade_realizada), 0)
-      const diff = Math.max(0, c.meta_valor - done)
-      return total + diff * c.penalidade_por_unidade
+    const progPenalty = (allCommitments || []).reduce((total: number, c: Commitment) => {
+      if (c.commitment_type === 'ocorrencia') return total
+      const entries = (prog || []).filter((p: any) => p.commitment_id === c.id)
+      const done = entries.reduce((s: number, e: any) => s + Number(e.quantidade_realizada), 0)
+      return total + calculatePenalty(c.commitment_type, c.meta_valor, done, c.penalidade_por_unidade, c.penalty_mode, c.penalty_multiplier)
     }, 0)
+    const occPenalty = (occ || []).reduce((s: number, o: any) => s + Number(o.penalidade_valor), 0)
+    return progPenalty + occPenalty
   }
 
-  const weekPenalty = calcPenalty(weekProgress || [], allCommitments || [])
-  const monthPenalty = calcPenalty(monthProgress || [], allCommitments || [])
+  const weekPenalty = await calcPeriodPenalty(weekStart, weekEnd)
+  const monthPenalty = await calcPeriodPenalty(monthStart, monthEnd)
 
-  // All time from penalties table
-  const { data: allPenalties } = await supabase
-    .from('penalties')
-    .select('penalidade_valor')
-    .eq('user_id', user.id)
+  const { data: allPenalties } = await supabase.from('penalties').select('penalidade_valor').eq('user_id', user.id)
+  const totalAccumulated = (allPenalties || []).reduce((s: number, p: any) => s + Number(p.penalidade_valor), 0)
 
-  const totalAccumulated = (allPenalties || []).reduce(
-    (sum: number, p: any) => sum + Number(p.penalidade_valor),
-    0
+  // Evolução mensal (últimos 6 meses)
+  const monthlyData = await Promise.all(
+    Array.from({ length: 6 }, (_, i) => {
+      const ref = subMonths(new Date(), i)
+      const start = startOfMonth(ref)
+      const end = new Date(ref.getFullYear(), ref.getMonth() + 1, 0)
+      return calcPeriodPenalty(start, end).then(val => ({
+        label: format(ref, 'MMM', { locale: ptBR }),
+        value: val,
+      }))
+    })
   )
+  const monthlyReversed = monthlyData.reverse()
+  const maxMonthly = Math.max(...monthlyReversed.map(m => m.value), 1)
 
-  // Recent history
   const { data: recentPenalties } = await supabase
-    .from('penalties')
-    .select('*, commitments(nome), goals(nome)')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
-    .limit(10)
+    .from('penalties').select('*, commitments(nome), goals(nome)')
+    .eq('user_id', user.id).order('created_at', { ascending: false }).limit(8)
 
   const selectedCharity = profile?.charities as Charity | null
 
@@ -94,123 +70,118 @@ export default async function ImpactPage() {
     <div className="space-y-10">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Impacto</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Suas consequências geram impacto positivo.
-        </p>
+        <p className="text-sm text-muted-foreground mt-0.5">Seus compromisos geram transformação — mesmo nas falhas.</p>
       </div>
 
-      {/* Summary cards */}
+      {/* Hero de impacto */}
+      {totalAccumulated > 0 && selectedCharity ? (
+        <div className="bg-foreground text-background rounded-2xl p-8 space-y-4">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-background/50 text-xs uppercase tracking-widest mb-2">Total comprometido</p>
+              <p className="text-5xl font-semibold">{formatCurrency(totalAccumulated)}</p>
+              <p className="text-background/60 text-sm mt-2">
+                destinados para o <span className="text-background font-medium">{selectedCharity.nome}</span>
+              </p>
+            </div>
+            <Heart className="w-10 h-10 text-background/20" />
+          </div>
+          <p className="text-background/50 text-sm border-t border-background/10 pt-4">
+            Cada compromisso não cumprido gerou impacto positivo. Suas falhas têm significado.
+          </p>
+        </div>
+      ) : (
+        <div className="bg-foreground text-background rounded-2xl p-8">
+          <p className="text-background/50 text-sm">Escolha uma causa abaixo para que suas consequências gerem impacto real.</p>
+        </div>
+      )}
+
+      {/* Métricas do período */}
       <div className="grid grid-cols-3 gap-4">
-        <div className="bg-white border border-border rounded-xl p-5 space-y-1">
-          <p className="text-xs text-muted-foreground uppercase tracking-widest">Esta semana</p>
+        <div className="bg-card border border-border rounded-xl p-5">
+          <p className="text-xs text-muted-foreground uppercase tracking-widest mb-2">Esta semana</p>
           <p className="text-2xl font-semibold">{formatCurrency(weekPenalty)}</p>
         </div>
-        <div className="bg-white border border-border rounded-xl p-5 space-y-1">
-          <p className="text-xs text-muted-foreground uppercase tracking-widest">Este mês</p>
+        <div className="bg-card border border-border rounded-xl p-5">
+          <p className="text-xs text-muted-foreground uppercase tracking-widest mb-2">Este mês</p>
           <p className="text-2xl font-semibold">{formatCurrency(monthPenalty)}</p>
         </div>
-        <div className="bg-foreground text-background rounded-xl p-5 space-y-1">
-          <p className="text-xs text-background/60 uppercase tracking-widest">Total acumulado</p>
+        <div className="bg-card border border-border rounded-xl p-5">
+          <p className="text-xs text-muted-foreground uppercase tracking-widest mb-2">Total acumulado</p>
           <p className="text-2xl font-semibold">{formatCurrency(totalAccumulated)}</p>
         </div>
       </div>
 
-      {/* Cause selection */}
-      <div className="space-y-4">
-        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-widest">
-          Sua causa social
-        </h2>
-
-        {selectedCharity ? (
-          <div className="bg-white border-2 border-foreground/20 rounded-xl p-5 space-y-3">
-            <div className="flex items-start justify-between">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <Heart className="w-4 h-4 text-consequence" />
-                  <p className="font-medium">{selectedCharity.nome}</p>
-                </div>
-                <p className="text-sm text-muted-foreground">{selectedCharity.descricao}</p>
-                <p className="text-xs text-muted-foreground">
-                  Categoria: {selectedCharity.categoria}
-                </p>
+      {/* Evolução mensal */}
+      <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <TrendingUp className="w-4 h-4 text-muted-foreground" />
+          <h2 className="text-sm font-medium">Evolução mensal</h2>
+        </div>
+        <div className="flex items-end gap-2 h-24">
+          {monthlyReversed.map((m, i) => (
+            <div key={i} className="flex-1 flex flex-col items-center gap-1">
+              <div className="w-full flex items-end justify-center" style={{ height: '80px' }}>
+                <div
+                  className={cn('w-full rounded-t-sm transition-all', m.value > 0 ? 'bg-consequence/60' : 'bg-secondary')}
+                  style={{ height: `${m.value > 0 ? Math.max(4, (m.value / maxMonthly) * 80) : 4}px` }}
+                />
               </div>
-              {selectedCharity.website && (
-                <a
-                  href={selectedCharity.website}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                  Site
-                </a>
-              )}
+              <p className="text-xs text-muted-foreground capitalize">{m.label}</p>
+              {m.value > 0 && <p className="text-xs font-medium">{formatCurrency(m.value)}</p>}
             </div>
-            {totalAccumulated > 0 && (
-              <div className="bg-secondary/60 rounded-lg p-3">
-                <p className="text-sm text-muted-foreground">
-                  Seu compromisso gerou{' '}
-                  <strong className="text-foreground">{formatCurrency(totalAccumulated)}</strong>{' '}
-                  em impacto para o <strong>{selectedCharity.nome}</strong>.
-                </p>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="bg-secondary/40 border border-dashed border-border rounded-xl p-6 text-center space-y-2">
-            <Heart className="w-8 h-8 text-muted-foreground mx-auto" />
-            <p className="text-sm text-muted-foreground">
-              Você ainda não escolheu uma causa. Selecione abaixo:
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Charity list */}
-      <div className="space-y-3">
-        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-widest">
-          Causas disponíveis
-        </h2>
-        <div className="grid gap-2">
-          {(charities || []).map((charity: Charity) => (
-            <CharityCard
-              key={charity.id}
-              charity={charity}
-              selected={selectedCharity?.id === charity.id}
-              userId={user.id}
-            />
           ))}
         </div>
       </div>
 
-      {/* Penalty history */}
+      {/* Causa atual */}
+      <div className="space-y-3">
+        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-widest">Sua causa social</h2>
+        {selectedCharity && (
+          <div className="bg-card border-2 border-foreground/20 rounded-xl p-5">
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <Heart className="w-4 h-4 text-consequence" />
+                  <p className="font-medium">{selectedCharity.nome}</p>
+                </div>
+                <p className="text-sm text-muted-foreground">{selectedCharity.descricao}</p>
+              </div>
+              {selectedCharity.website && (
+                <a href={selectedCharity.website} target="_blank" rel="noopener noreferrer"
+                  className="text-muted-foreground hover:text-foreground transition-colors">
+                  <ExternalLink className="w-4 h-4" />
+                </a>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Escolher causa */}
+      <div className="space-y-3">
+        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-widest">
+          {selectedCharity ? 'Trocar causa' : 'Escolher causa'}
+        </h2>
+        <div className="grid gap-2">
+          {(charities || []).map((c: Charity) => (
+            <CharityCard key={c.id} charity={c} selected={selectedCharity?.id === c.id} userId={user.id} />
+          ))}
+        </div>
+      </div>
+
+      {/* Histórico */}
       {(recentPenalties || []).length > 0 && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-widest">
-              Histórico de consequências
-            </h2>
-            <Link
-              href="/history"
-              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-            >
-              Ver tudo
-              <ArrowRight className="w-3 h-3" />
-            </Link>
-          </div>
-
-          <div className="bg-white border border-border rounded-xl divide-y divide-border overflow-hidden">
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-widest">Histórico de consequências</h2>
+          <div className="bg-card border border-border rounded-xl divide-y divide-border overflow-hidden">
             {(recentPenalties || []).map((p: any) => (
               <div key={p.id} className="px-5 py-3.5 flex items-center justify-between">
-                <div className="space-y-0.5">
+                <div>
                   <p className="text-sm font-medium">{p.goals?.nome}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {p.commitments?.nome} · {formatDate(p.periodo_inicio)} a {formatDate(p.periodo_fim)}
-                  </p>
+                  <p className="text-xs text-muted-foreground">{p.commitments?.nome} · {formatDate(p.periodo_inicio)}</p>
                 </div>
-                <span className="text-sm font-medium text-consequence">
-                  {formatCurrency(Number(p.penalidade_valor))}
-                </span>
+                <span className="text-sm font-medium text-consequence">{formatCurrency(Number(p.penalidade_valor))}</span>
               </div>
             ))}
           </div>
@@ -219,5 +190,3 @@ export default async function ImpactPage() {
     </div>
   )
 }
-
-

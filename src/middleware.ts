@@ -9,30 +9,21 @@ export async function middleware(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
     {
       cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet :any[]) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          )
+        getAll() { return request.cookies.getAll() },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
           supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
+          cookiesToSet.forEach(({ name, value, options }) => supabaseResponse.cookies.set(name, value, options))
         },
       },
     }
   )
 
   const { data: { user } } = await supabase.auth.getUser()
-
   const isAuthRoute = request.nextUrl.pathname.startsWith('/auth')
-  const isProtected =
-    request.nextUrl.pathname.startsWith('/dashboard') ||
-    request.nextUrl.pathname.startsWith('/goals') ||
-    request.nextUrl.pathname.startsWith('/impact') ||
-    request.nextUrl.pathname.startsWith('/history')
+  const isProtected = ['/dashboard', '/goals', '/week', '/impact', '/history', '/stats', '/weekly-contract'].some(
+    p => request.nextUrl.pathname.startsWith(p)
+  )
 
   if (!user && isProtected) {
     const url = request.nextUrl.clone()
@@ -50,7 +41,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
-  ],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
 }
