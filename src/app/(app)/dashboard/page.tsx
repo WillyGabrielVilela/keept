@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { Plus, CheckCircle2, XCircle, AlertCircle, ArrowRight, Heart, Star, FileText } from 'lucide-react'
 import {
   formatCurrency, categoryEmoji, getProgressPercent,
-  getCurrentWeekRange, formatNumber, calculateProgressivePenalty,
+  getCurrentWeekRange, formatNumber, calculatePenalty,
 } from '@/lib/utils'
 import { format, differenceInDays } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
@@ -42,7 +42,8 @@ export default async function DashboardPage() {
         const entries = (progressEntries || []).filter((p: ProgressEntry) => p.commitment_id === c.id)
         const totalDone = entries.reduce((s: number, e: ProgressEntry) => s + Number(e.quantidade_realizada), 0)
         const met = totalDone >= c.meta_valor
-        const penalty = met ? 0 : calculateProgressivePenalty(
+        const penalty = met ? 0 : calculatePenalty(
+          c.commitment_type || 'meta_minima',
           c.meta_valor, totalDone, c.penalidade_por_unidade,
           c.penalty_mode, c.penalty_multiplier
         )

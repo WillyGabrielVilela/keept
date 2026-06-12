@@ -5,7 +5,7 @@ import { Plus, ArrowLeft, CheckCircle2, XCircle, AlertCircle, Pencil } from 'luc
 import {
   formatDate, formatCurrency, categoryEmoji, categoryLabels,
   frequencyLabels, unitLabels, getProgressPercent, getCycleDates,
-  getDaysRemaining, calculateProgressivePenalty, penaltyModeLabels,
+  calculatePenalty, penaltyModeLabels, isCommitmentMet, cn,
 } from '@/lib/utils'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
@@ -35,10 +35,12 @@ export default async function GoalDetailPage({ params }: Props) {
       .lte('data', format(cycleEnd, 'yyyy-MM-dd'))
 
     const totalDone = (entries || []).reduce((s: number, e: ProgressEntry) => s + Number(e.quantidade_realizada), 0)
-    const met = totalDone >= c.meta_valor
-    const daysLeft = getDaysRemaining(cycleEnd)
-    const penalty = met ? 0 : calculateProgressivePenalty(
-      c.meta_valor, totalDone, c.penalidade_por_unidade, c.penalty_mode, c.penalty_multiplier
+    const met = isCommitmentMet(c.commitment_type || 'meta_minima', c.meta_valor, totalDone)
+    const daysLeft = Math.max(0, Math.round((cycleEnd.getTime() - new Date().getTime()) / 86400000))
+    const penalty = met ? 0 : calculatePenalty(
+      c.commitment_type || 'meta_minima',
+      c.meta_valor, totalDone, c.penalidade_por_unidade,
+      c.penalty_mode, c.penalty_multiplier
     )
     return { ...c, totalDone, met, penalty, cycleStart, cycleEnd, daysLeft, entries: entries || [] }
   }))
