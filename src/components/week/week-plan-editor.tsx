@@ -47,7 +47,7 @@ export function WeekPlanEditor({ userId, weekId, weekNumber, year, commitments, 
     router.refresh()
   }
 
-  const editableCommitments = commitments.filter(c => c.commitment_type !== 'ocorrencia')
+  const editableCommitments = commitments.filter(c => c.commitment_type !== 'event_occurrence' && c.commitment_type !== 'event_limited')
   if (editableCommitments.length === 0) return null
 
   return (

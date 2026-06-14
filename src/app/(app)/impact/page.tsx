@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { Heart, ExternalLink, TrendingUp } from 'lucide-react'
-import { formatCurrency, formatDate, getCurrentWeekRange, getCurrentMonthRange, calculatePenalty, cn } from '@/lib/utils'
+import { formatCurrency, formatDate, getCurrentWeekRange, getCurrentMonthRange, calculatePenalty, isEventType, cn } from '@/lib/utils'
 import { format, startOfMonth, subMonths } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { CharityCard } from '@/components/goals/charity-card'
@@ -30,7 +30,7 @@ export default async function ImpactPage() {
       .gte('data', format(dateStart, 'yyyy-MM-dd')).lte('data', format(dateEnd, 'yyyy-MM-dd'))
 
     const progPenalty = (allCommitments || []).reduce((total: number, c: Commitment) => {
-      if (c.commitment_type === 'ocorrencia') return total
+      if (isEventType(c.commitment_type)) return total
       const entries = (prog || []).filter((p: any) => p.commitment_id === c.id)
       const done = entries.reduce((s: number, e: any) => s + Number(e.quantidade_realizada), 0)
       return total + calculatePenalty(c.commitment_type, c.meta_valor, done, c.penalidade_por_unidade, c.penalty_mode, c.penalty_multiplier)

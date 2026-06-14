@@ -2,7 +2,7 @@ import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import {
   startOfWeek, endOfWeek, startOfMonth, endOfMonth,
-  format, getISOWeek, getYear, addWeeks, subWeeks, parseISO,
+  format, getISOWeek, getYear, addWeeks, subWeeks,
 } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import type {
@@ -15,7 +15,9 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function formatCurrency(value: number): string {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency', currency: 'BRL',
+  }).format(value)
 }
 
 export function formatDate(date: string | Date): string {
@@ -30,7 +32,7 @@ export function formatNumber(n: number): string {
   return new Intl.NumberFormat('pt-BR').format(Math.round(n))
 }
 
-// ─── Week helpers ───────────────────────────────────────────
+// ─── Week helpers ────────────────────────────────────────────
 export function getWeekRange(date: Date = new Date()) {
   return {
     start: startOfWeek(date, { weekStartsOn: 1 }),
@@ -38,19 +40,16 @@ export function getWeekRange(date: Date = new Date()) {
   }
 }
 
-export function getWeekId(date: Date = new Date()) {
-  // Returns "2026-W25"
+export function getWeekId(date: Date = new Date()): string {
   const week = getISOWeek(date)
   const year = getYear(date)
   return `${year}-W${String(week).padStart(2, '0')}`
 }
 
 export function parseWeekId(weekId: string): { year: number; week: number; date: Date } {
-  // "2026-W25" → date of Monday of that week
   const [yearStr, weekStr] = weekId.split('-W')
   const year = parseInt(yearStr)
   const week = parseInt(weekStr)
-  // Jan 4th is always in week 1
   const jan4 = new Date(year, 0, 4)
   const startOfYear = startOfWeek(jan4, { weekStartsOn: 1 })
   const date = addWeeks(startOfYear, week - 1)
@@ -79,48 +78,77 @@ export function getCurrentMonthRange() {
 export function getCycleDates(frequency: CommitmentFrequency, referenceDate?: Date) {
   const now = referenceDate || new Date()
   switch (frequency) {
-    case 'diaria':
-      return { start: now, end: now }
-    case 'semanal':
-      return getWeekRange(now)
-    case 'mensal':
-      return { start: startOfMonth(now), end: endOfMonth(now) }
+    case 'diaria':  return { start: now, end: now }
+    case 'semanal': return getWeekRange(now)
+    case 'mensal':  return { start: startOfMonth(now), end: endOfMonth(now) }
   }
 }
 
 // ─── Penalty calculation ─────────────────────────────────────
+/**
+ * Calculates total penalty for progress-based commitment types.
+ * For event_occurrence / event_limited use calculateOccurrencePenalty.
+ */
 export function calculatePenalty(
-  commitment_type: CommitmentType,
+  type: CommitmentType,
   meta: number,
   realizado: number,
   penalidade_por_unidade: number,
   mode: PenaltyMode = 'fixed',
   multiplier: number = 1,
 ): number {
-  if (commitment_type === 'ocorrencia') {
-    // calculated per-occurrence, not here
-    return 0
+  let units = 0
+
+  if (type === 'minimum_goal') {
+    units = Math.max(0, meta - realizado)
+  } else if (type === 'maximum_limit') {
+    units = Math.max(0, realizado - meta)
+  } else {
+    return 0 // event types handled separately
   }
 
-  if (commitment_type === 'meta_minima') {
-    const deficit = Math.max(0, meta - realizado)
-    if (deficit === 0) return 0
-    return calcProgressive(deficit, penalidade_por_unidade, mode, multiplier)
-  }
-
-  if (commitment_type === 'limite_maximo') {
-    const excess = Math.max(0, realizado - meta)
-    if (excess === 0) return 0
-    return calcProgressive(excess, penalidade_por_unidade, mode, multiplier)
-  }
-
-  return 0
+  if (units === 0) return 0
+  return calcProgressive(units, penalidade_por_unidade, mode, multiplier)
 }
 
-function calcProgressive(units: number, base: number, mode: PenaltyMode, multiplier: number): number {
+/**
+ * Calculates penalty for a single occurrence (event_occurrence or event_limited).
+ * For event_limited, pass total occurrences so far; this returns penalty for the next one.
+ */
+export function calculateOccurrencePenalty(
+  penalidade_base: number,
+  occurrence_number: number,   // 1-based, total occurrences including this one
+  mode: PenaltyMode,
+  multiplier: number,
+  free_quota: number = 0,      // event_limited: free occurrences
+): number {
+  if (occurrence_number <= free_quota) return 0  // within free quota
+  const billable = occurrence_number - free_quota // 1-based billable index
   switch (mode) {
-    case 'fixed':
-      return units * base
+    case 'fixed':       return penalidade_base
+    case 'linear':      return penalidade_base + (billable - 1) * multiplier
+    case 'exponential': return penalidade_base * Math.pow(multiplier, billable - 1)
+    default:            return penalidade_base
+  }
+}
+
+/**
+ * Total penalty for all occurrences recorded (event_occurrence / event_limited).
+ */
+export function calculateTotalOccurrencePenalty(
+  occurrences: { penalidade_valor: number }[],
+): number {
+  return occurrences.reduce((s, o) => s + Number(o.penalidade_valor), 0)
+}
+
+function calcProgressive(
+  units: number,
+  base: number,
+  mode: PenaltyMode,
+  multiplier: number,
+): number {
+  switch (mode) {
+    case 'fixed': return units * base
     case 'linear': {
       let total = 0
       for (let i = 0; i < units; i++) total += base + i * multiplier
@@ -131,48 +159,56 @@ function calcProgressive(units: number, base: number, mode: PenaltyMode, multipl
       for (let i = 0; i < units; i++) total += base * Math.pow(multiplier, i)
       return total
     }
-    default:
-      return units * base
+    default: return units * base
   }
 }
 
-export function calculateOccurrencePenalty(
-  penalidade_base: number,
-  occurrence_number: number,
-  mode: PenaltyMode,
-  multiplier: number,
-): number {
-  switch (mode) {
-    case 'fixed': return penalidade_base
-    case 'linear': return penalidade_base + (occurrence_number - 1) * multiplier
-    case 'exponential': return penalidade_base * Math.pow(multiplier, occurrence_number - 1)
-    default: return penalidade_base
-  }
-}
-
+/**
+ * Returns true if commitment was met (no penalty).
+ */
 export function isCommitmentMet(
   type: CommitmentType,
   meta: number,
   realizado: number,
+  free_quota: number = 0,
 ): boolean {
-  if (type === 'meta_minima') return realizado >= meta
-  if (type === 'limite_maximo') return realizado <= meta
-  return true // ocorrência não tem "met" binário
+  switch (type) {
+    case 'minimum_goal':    return realizado >= meta
+    case 'maximum_limit':   return realizado <= meta
+    case 'event_occurrence': return false  // no concept of "met"
+    case 'event_limited':   return realizado <= free_quota
+    default:                return false
+  }
 }
 
+/**
+ * Returns whether the type uses the occurrences table (not progress_entries).
+ */
+export function isEventType(type: CommitmentType): boolean {
+  return type === 'event_occurrence' || type === 'event_limited'
+}
+
+/**
+ * Progress percent for display bar.
+ * For maximum_limit: bar fills as you approach/exceed limit.
+ * For event types: percentage of free quota used.
+ */
 export function getProgressPercent(
   type: CommitmentType,
   realizado: number,
   meta: number,
+  free_quota: number = 0,
 ): number {
-  if (meta === 0) return 100
-  if (type === 'limite_maximo') {
-    return Math.min(100, Math.round((realizado / meta) * 100))
+  if (type === 'event_occurrence') return 0
+  if (type === 'event_limited') {
+    if (free_quota === 0) return 100
+    return Math.min(150, Math.round((realizado / free_quota) * 100))
   }
+  if (meta === 0) return 100
   return Math.min(100, Math.round((realizado / meta) * 100))
 }
 
-// ─── Labels ─────────────────────────────────────────────────
+// ─── Labels ──────────────────────────────────────────────────
 export const categoryLabels: Record<GoalCategory, string> = {
   estudos: 'Estudos',
   saude: 'Saúde',
@@ -202,21 +238,30 @@ export const unitLabels: Record<CommitmentUnit, string> = {
 }
 
 export const commitmentTypeLabels: Record<CommitmentType, string> = {
-  meta_minima: 'Meta mínima',
-  limite_maximo: 'Limite máximo',
-  ocorrencia: 'Evento / ocorrência',
+  minimum_goal:     'Meta mínima',
+  maximum_limit:    'Limite máximo',
+  event_occurrence: 'Evento por ocorrência',
+  event_limited:    'Evento limitado',
 }
 
 export const commitmentTypeDesc: Record<CommitmentType, string> = {
-  meta_minima: 'Consequência quando você fica abaixo da meta (ex: estudar 20h)',
-  limite_maximo: 'Consequência quando você ultrapassa o limite (ex: até 2h YouTube)',
-  ocorrencia: 'Cada ocorrência gera consequência individual (ex: acessar Instagram)',
+  minimum_goal:     'Consequência quando você fica abaixo da meta (ex: estudar 20h)',
+  maximum_limit:    'Consequência quando você ultrapassa o limite (ex: até 2h YouTube)',
+  event_occurrence: 'Cada ocorrência gera consequência independente (ex: acessar Instagram)',
+  event_limited:    'Algumas ocorrências são gratuitas; excesso gera consequência (ex: até 3x YouTube)',
+}
+
+export const commitmentTypeExamples: Record<CommitmentType, string[]> = {
+  minimum_goal:     ['Estudar 25 horas', 'Resolver 300 questões', 'Academia 4x na semana'],
+  maximum_limit:    ['Até 14.000 kcal', 'Até 2h YouTube', 'Até R$100 em gastos impulsivos'],
+  event_occurrence: ['Entrar no Instagram', 'Pedir delivery', 'Compra por impulso'],
+  event_limited:    ['Até 3x YouTube na semana', 'Até 2 refeições livres', 'Até 5x Instagram'],
 }
 
 export const penaltyModeLabels: Record<PenaltyMode, string> = {
-  fixed: 'Fixa',
-  linear: 'Linear',
-  exponential: 'Exponencial',
+  fixed:       'Fixa — mesmo valor sempre',
+  linear:      'Linear — cresce a cada unidade',
+  exponential: 'Exponencial — multiplica a cada unidade',
 }
 
 export const categoryEmoji: Record<GoalCategory, string> = {
