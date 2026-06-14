@@ -19,7 +19,6 @@ import {
 import { useToast } from '@/hooks/use-toast'
 import { unitLabels } from '@/lib/utils'
 import { format } from 'date-fns'
-import { use } from 'react'
 import type { Commitment } from '@/types'
 
 interface Props {
@@ -133,13 +132,13 @@ export default function NewProgressPage({ params }: Props) {
             id="quantidade"
             type="number"
             min="0"
-            step="0.5"
+            step="any"
             placeholder="Ex: 3"
             value={quantidade}
             onChange={(e) => setQuantidade(e.target.value)}
             required
           />
-          {selectedCommitment && (
+          {selectedCommitment && selectedCommitment.meta_valor > 0 && (
             <p className="text-xs text-muted-foreground">
               Meta: {selectedCommitment.meta_valor} {unitLabels[selectedCommitment.unidade]} por período
             </p>
